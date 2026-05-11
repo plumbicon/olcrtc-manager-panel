@@ -14,29 +14,62 @@ Version 2 includes:
 - speed limits through per-client `network namespace` + `veth`;
 - one isolated `olcrtc` process per client location.
 
-## Requirements
+## Quick Install
 
-The manager must run on Linux with root privileges because v2 creates network namespaces, veth interfaces, routes, iptables rules, and `tc` qdisc limits.
-
-Required tools on the server:
+Run this on a systemd-based Linux server:
 
 ```sh
-ip
-iptables
-tc
-systemctl
+curl -fsSL https://raw.githubusercontent.com/BigDaddy3334/olcrtc-manager-panel/main/install.sh | sudo bash
 ```
 
-Runtime files expected by the default systemd unit:
+The installer:
 
-- `/usr/local/bin/olcrtc-manager`
-- `/usr/local/bin/olcrtc`
-- `/etc/olcrtc-manager/config.json`
-- optional `/etc/olcrtc-manager/panel.env`
+- installs/checks runtime tools: `ip`, `iptables`, `tc`, `systemctl`;
+- installs `/usr/local/bin/olcrtc-manager`;
+- installs `/usr/local/bin/olcrtc`;
+- creates `/etc/olcrtc-manager/config.json` if it does not exist;
+- installs and starts `olcrtc-manager.service`;
+- leaves `/etc/olcrtc-manager/panel.env` absent so first-run password setup works.
 
-Do not create `panel.env` for a fresh install if you want first-run setup. The panel will ask you to create the admin password on first open.
+The panel listens on `127.0.0.1:8888` by default:
 
-## Build
+```text
+http://127.0.0.1:8888/admin
+```
+
+Use `--addr 0.0.0.0` for direct access, or keep the default and publish it through a reverse proxy.
+
+If there are GitHub release binaries, the installer uses them. Otherwise it downloads source archives and builds in a temporary directory. For `olcrtc`, this is currently the normal path because upstream does not publish release binaries.
+
+## Installer Options
+
+Common examples:
+
+```sh
+# Use another port.
+curl -fsSL https://raw.githubusercontent.com/BigDaddy3334/olcrtc-manager-panel/main/install.sh | sudo bash -s -- --port 8080
+
+# Bind directly to all interfaces. Use a firewall or reverse proxy in production.
+curl -fsSL https://raw.githubusercontent.com/BigDaddy3334/olcrtc-manager-panel/main/install.sh | sudo bash -s -- --addr 0.0.0.0
+
+# Use explicit binary artifacts instead of building.
+curl -fsSL https://raw.githubusercontent.com/BigDaddy3334/olcrtc-manager-panel/main/install.sh | sudo bash -s -- \
+  --panel-url https://example.com/olcrtc-manager-linux-amd64 \
+  --olcrtc-url https://example.com/olcrtc-linux-amd64
+```
+
+Useful environment variables:
+
+- `PANEL_REF`: branch/tag/commit of this repository, default `main`;
+- `OLCRTC_REF`: branch/tag/commit of `openlibrecommunity/olcrtc`, default `master`;
+- `PORT`: panel port, default `8888`;
+- `LISTEN_ADDR`: bind address, default `127.0.0.1`;
+- `ROOM_ID` and `ENDPOINT_KEY`: use pre-generated initial endpoint values;
+- `SPEED_MBPS`, `TRAFFIC_GB`, `EXPIRES_AT`: initial default client quota.
+
+The installer keeps an existing config by default. Pass `--force-config` to replace it; the old file is backed up with a timestamp.
+
+## Manual Build
 
 Build frontend assets first, then build the Go binary so the panel is embedded into the manager:
 
@@ -46,42 +79,24 @@ pnpm build
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o olcrtc-manager ./cmd/olcrtc-manager
 ```
 
-If you only change Go code and `cmd/olcrtc-manager/web/dist` is already present, `go build` is enough.
-
-## Install
-
-Copy binaries and config:
+Then install:
 
 ```sh
 sudo install -m 0755 olcrtc-manager /usr/local/bin/olcrtc-manager
 sudo install -m 0755 olcrtc /usr/local/bin/olcrtc
 sudo install -d -m 0755 /etc/olcrtc-manager
 sudo install -m 0600 config.json /etc/olcrtc-manager/config.json
-```
-
-Install and start the systemd service:
-
-```sh
 sudo install -m 0644 packaging/systemd/olcrtc-manager.service /etc/systemd/system/olcrtc-manager.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now olcrtc-manager
 ```
-
-Check status:
-
-```sh
-sudo systemctl status olcrtc-manager
-sudo journalctl -u olcrtc-manager -f
-```
-
-The manager listens on `127.0.0.1:<config.port>`. The default examples use port `8888`.
 
 ## First Run
 
 Open the panel:
 
 ```text
-http://SERVER:8888/admin
+http://127.0.0.1:8888/admin
 ```
 
 If `/etc/olcrtc-manager/panel.env` does not exist or does not contain a password, the panel starts in first-run mode and asks you to set the admin password.
