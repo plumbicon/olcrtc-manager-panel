@@ -179,7 +179,7 @@ function formatBytes(bytes?: number) {
 }
 
 function subscriptionURL(clientID: string) {
-  return `${window.location.origin}/${encodeURIComponent(clientID)}/`;
+  return `${window.location.origin}/sub/${encodeURIComponent(clientID)}`;
 }
 
 function cleanQuota(quota: Quota): Quota {
@@ -261,7 +261,7 @@ function Modal({
 }
 
 function LoginView({ setupRequired, onLogin }: { setupRequired: boolean; onLogin: () => void }) {
-  const [user, setUser] = useState("admin");
+  const [user, setUser] = useState("");
   const [password, setPassword] = useState("");
   const [repeat, setRepeat] = useState("");
   const [error, setError] = useState("");
@@ -758,7 +758,7 @@ function App() {
     }, `Subscription для ${clientID} скопирован`);
 
   const downloadSubscription = async (clientID: string) => {
-    const res = await request(`/${encodeURIComponent(clientID)}/`, { cache: "no-store" });
+    const res = await request(`/sub/${encodeURIComponent(clientID)}`, { cache: "no-store" });
     const text = await res.text();
     const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
     const url = URL.createObjectURL(blob);

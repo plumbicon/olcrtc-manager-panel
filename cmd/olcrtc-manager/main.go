@@ -260,6 +260,7 @@ func run() error {
 		return err
 	}
 	handler.Handle("/admin", http.HandlerFunc(adminPageHandler(adminFileServer)))
+	handler.Handle("/admin/", http.HandlerFunc(adminPageHandler(adminFileServer)))
 	handler.Handle("/assets/", adminFileServer)
 	handler.Handle("/api/auth/login", http.HandlerFunc(loginHandler(configPath)))
 	handler.Handle("/api/auth/setup", http.HandlerFunc(setupHandler(configPath)))
@@ -462,7 +463,7 @@ func run() error {
 			w.WriteHeader(http.StatusNoContent)
 		}
 	})))
-	handler.Handle("/", subscriptionHandler(supervisor))
+	handler.Handle("/sub/", subscriptionHandler(supervisor))
 
 	server := &http.Server{
 		Addr:              net.JoinHostPort(listenAddr, strconv.Itoa(cfg.Port)),
@@ -2905,7 +2906,10 @@ func securityHeaders(next http.Handler) http.Handler {
 }
 
 func clientIDFromPath(path string) (string, bool) {
-	clientID := strings.Trim(path, "/")
+	clientID, ok := strings.CutPrefix(strings.Trim(path, "/"), "sub/")
+	if !ok {
+		return "", false
+	}
 	if clientID == "" || strings.Contains(clientID, "/") {
 		return "", false
 	}

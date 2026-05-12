@@ -4,10 +4,10 @@
 
 Версия 2 включает:
 
-- админ-панель на `/admin`;
-- настройку пароля при первом запуске;
+- админ-панель на `/admin/`;
+- случайный логин и пароль при установке;
 - создание, редактирование и удаление клиентов, ротацию room/key, рестарт, логи, QR-коды и экспорт подписок;
-- отдельные подписки для клиентов на `/<client-id>/`;
+- отдельные подписки для клиентов на `/sub/<client-id>`;
 - метаданные квот трафика в подписках;
 - автоматический учет входящего трафика;
 - блокировку по лимиту трафика и сроку действия;
@@ -28,13 +28,21 @@ curl -fsSL https://raw.githubusercontent.com/plumbicon/olcrtc-manager-panel/main
 - устанавливает `/usr/local/bin/olcrtc-manager`;
 - устанавливает `/usr/local/bin/olcrtc`;
 - создает `/etc/olcrtc-manager/config.json`, если его еще нет;
+- создает случайный порт, логин и пароль, если они не заданы явно;
+- записывает учетные данные в `/etc/olcrtc-manager/panel.env`;
 - устанавливает и запускает `olcrtc-manager.service`;
-- не создает `/etc/olcrtc-manager/panel.env`, чтобы сработала настройка пароля при первом запуске.
+- выводит адрес панели и учетные данные в конце установки.
 
-По умолчанию панель слушает `127.0.0.1:8888`:
+По умолчанию порт выбирается случайно. В конце установки будет напечатано примерно так:
 
 ```text
-http://127.0.0.1:8888/admin
+Panel:
+  URL:      http://127.0.0.1:25473/admin/
+  Login:    admin-3f8a91c2
+  Password: 5d9e6f0e8a4b1c2d3e4f5a6b7c8d9e0f1234
+
+Default client subscription:
+  http://127.0.0.1:25473/sub/default
 ```
 
 Для прямого доступа используйте `--addr 0.0.0.0`, либо оставьте значение по умолчанию и опубликуйте панель через обратный прокси.
@@ -62,8 +70,9 @@ curl -fsSL https://raw.githubusercontent.com/plumbicon/olcrtc-manager-panel/main
 
 - `PANEL_REF`: ветка/тег/commit этого репозитория, по умолчанию `main`;
 - `OLCRTC_REF`: ветка/тег/commit репозитория `openlibrecommunity/olcrtc`, по умолчанию `master`;
-- `PORT`: порт панели, по умолчанию `8888`;
+- `PORT`: порт панели; если не задан, на свежей установке будет выбран случайный свободный порт;
 - `LISTEN_ADDR`: адрес прослушивания, по умолчанию `127.0.0.1`;
+- `ADMIN_USER` и `ADMIN_PASS`: использовать заданные логин и пароль вместо случайных;
 - `ROOM_ID` и `ENDPOINT_KEY`: использовать заранее сгенерированные начальные значения endpoint;
 - `SPEED_MBPS`, `TRAFFIC_GB`, `EXPIRES_AT`: начальная квота клиента по умолчанию.
 
@@ -91,30 +100,28 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now olcrtc-manager
 ```
 
-## Первый запуск
+## Доступ к панели
 
-Откройте панель:
+Откройте URL, который установщик вывел в конце. Путь панели:
 
 ```text
-http://127.0.0.1:8888/admin
+http://SERVER:RANDOM_PORT/admin/
 ```
 
-Если `/etc/olcrtc-manager/panel.env` не существует или не содержит пароль, панель запускается в режиме первого запуска и попросит задать пароль администратора.
+Логин и пароль установщик записывает сюда:
 
-После настройки менеджер записывает:
-
-```sh
+```text
 /etc/olcrtc-manager/panel.env
 ```
 
 Пример содержимого:
 
 ```sh
-OLCRTC_MANAGER_USER='admin'
-OLCRTC_MANAGER_PASS='your-password'
+OLCRTC_MANAGER_USER='admin-3f8a91c2'
+OLCRTC_MANAGER_PASS='5d9e6f0e8a4b1c2d3e4f5a6b7c8d9e0f1234'
 ```
 
-После этого панель использует cookie-сессии для входа. Позже пароль можно изменить кнопкой `Пароль` в шапке панели.
+Если `panel.env` отсутствует или не содержит пароль, панель запускается в режиме первого запуска и попросит задать пароль администратора. Позже пароль можно изменить кнопкой `Пароль` в шапке панели.
 
 ## Обратный прокси
 
@@ -129,7 +136,7 @@ server {
     ssl_certificate_key /path/privkey.pem;
 
     location / {
-        proxy_pass http://127.0.0.1:8888;
+        proxy_pass http://127.0.0.1:RANDOM_PORT;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
@@ -140,7 +147,7 @@ server {
 Затем откройте:
 
 ```text
-https://example.com:9443/admin
+https://example.com:9443/admin/
 ```
 
 ## Конфигурация
@@ -221,7 +228,7 @@ iptables -t nat -S POSTROUTING | grep olcrtc-manager-netns
 Подписка клиента:
 
 ```text
-http://127.0.0.1:8888/<client-id>/
+http://127.0.0.1:RANDOM_PORT/sub/<client-id>
 ```
 
 Если квота настроена, подписка содержит ее метаданные:
@@ -252,12 +259,12 @@ sudo systemctl reload olcrtc-manager
 Или локально:
 
 ```sh
-curl -X POST http://127.0.0.1:8888/-/reload
+curl -X POST http://127.0.0.1:RANDOM_PORT/-/reload
 ```
 
 ## API и авторизация панели
 
-На свежей установке пароля по умолчанию нет. Настройку первого запуска нужно завершить через `/admin`.
+На свежей установке установщик создает случайные логин и пароль. Если `/etc/olcrtc-manager/panel.env` удалить, настройку первого запуска нужно будет завершить через `/admin/`.
 
 После настройки:
 
@@ -275,4 +282,4 @@ scripts/modify-user.sh /etc/olcrtc-manager/config.json alice --location-name Ger
 scripts/delete-user.sh /etc/olcrtc-manager/config.json alice
 ```
 
-Передайте `--reload http://127.0.0.1:8888/-/reload`, чтобы перезагрузить запущенный менеджер после сохранения конфига.
+Передайте `--reload http://127.0.0.1:RANDOM_PORT/-/reload`, чтобы перезагрузить запущенный менеджер после сохранения конфига.

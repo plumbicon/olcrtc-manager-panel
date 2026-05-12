@@ -9,12 +9,13 @@ OLCRTC_REF="${OLCRTC_REF:-master}"
 BIN_DIR="${BIN_DIR:-/usr/local/bin}"
 CONFIG_DIR="${CONFIG_DIR:-/etc/olcrtc-manager}"
 CONFIG_PATH="${CONFIG_PATH:-$CONFIG_DIR/config.json}"
+PANEL_ENV_PATH="${PANEL_ENV_PATH:-}"
 SERVICE_NAME="${SERVICE_NAME:-olcrtc-manager}"
 SERVICE_PATH="${SERVICE_PATH:-/etc/systemd/system/$SERVICE_NAME.service}"
 TOOL_DIR="${TOOL_DIR:-/usr/local/lib/olcrtc-manager/tools}"
 
 LISTEN_ADDR="${LISTEN_ADDR:-127.0.0.1}"
-PORT="${PORT:-8888}"
+PORT="${PORT:-}"
 PANEL_NAME="${PANEL_NAME:-OlcRTC VPS}"
 CLIENT_ID="${CLIENT_ID:-default}"
 LOCATION_NAME="${LOCATION_NAME:-Current VPS}"
@@ -28,6 +29,8 @@ TRAFFIC_GB="${TRAFFIC_GB:-0}"
 EXPIRES_AT="${EXPIRES_AT:-}"
 ROOM_ID="${ROOM_ID:-}"
 ENDPOINT_KEY="${ENDPOINT_KEY:-}"
+ADMIN_USER="${ADMIN_USER:-}"
+ADMIN_PASS="${ADMIN_PASS:-}"
 
 PANEL_BINARY_URL="${PANEL_BINARY_URL:-}"
 OLCRTC_BINARY_URL="${OLCRTC_BINARY_URL:-}"
@@ -86,7 +89,7 @@ Usage:
   bash install.sh [options]
 
 Options:
-  --port PORT              Panel port, default: $PORT
+  --port PORT              Panel port, default: random on fresh install
   --addr ADDR              Listen address, default: $LISTEN_ADDR
   --panel-ref REF          olcrtc-manager ref to build from, default: $PANEL_REF
   --olcrtc-ref REF         olcrtc ref to build from, default: $OLCRTC_REF
@@ -99,9 +102,10 @@ Options:
 
 Environment:
   PANEL_REPO, PANEL_REF, OLCRTC_REPO, OLCRTC_REF
-  BIN_DIR, CONFIG_DIR, LISTEN_ADDR, PORT
+  BIN_DIR, CONFIG_DIR, PANEL_ENV_PATH, LISTEN_ADDR, PORT
   CLIENT_ID, LOCATION_NAME, CARRIER, TRANSPORT, DNS_SERVER
   ROOM_ID, ENDPOINT_KEY, SPEED_MBPS, TRAFFIC_GB, EXPIRES_AT
+  ADMIN_USER, ADMIN_PASS
   PANEL_BINARY_URL, OLCRTC_BINARY_URL
 EOF
 }
@@ -155,7 +159,11 @@ while [ "$#" -gt 0 ]; do
 	esac
 done
 
-if ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; then
+if [ -z "$PANEL_ENV_PATH" ]; then
+	PANEL_ENV_PATH="$CONFIG_DIR/panel.env"
+fi
+
+if [ -n "$PORT" ] && { ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; }; then
 	die "PORT must be a number between 1 and 65535"
 fi
 
@@ -216,7 +224,7 @@ install_packages() {
 
 	local missing_runtime=''
 	local runtime_cmd
-	for runtime_cmd in curl tar gzip xz openssl ip iptables tc; do
+	for runtime_cmd in curl tar gzip xz unzip openssl ip iptables tc; do
 		if ! command -v "$runtime_cmd" >/dev/null 2>&1; then
 			missing_runtime="$missing_runtime $runtime_cmd"
 		fi
@@ -268,6 +276,66 @@ need_commands() {
 	if [ -n "$missing" ]; then
 		die "missing required commands:$missing"
 	fi
+}
+
+validate_port() {
+	local value="$1"
+	[[ "$value" =~ ^[0-9]+$ ]] && [ "$value" -ge 1 ] && [ "$value" -le 65535 ]
+}
+
+port_in_use() {
+	local value="$1"
+	if command -v ss >/dev/null 2>&1; then
+		ss -ltn | awk '{print $4}' | grep -Eq "[:.]$value$"
+		return
+	fi
+	return 1
+}
+
+random_hex() {
+	local size="${1:-32}"
+	if command -v openssl >/dev/null 2>&1; then
+		openssl rand -hex "$size"
+	else
+		dd if=/dev/urandom bs="$size" count=1 2>/dev/null | od -An -tx1 | tr -d ' \n'
+		printf '\n'
+	fi
+}
+
+random_port() {
+	local i hex candidate
+	for i in $(seq 1 50); do
+		hex="$(random_hex 2)"
+		candidate=$((10000 + 16#$hex % 50000))
+		if ! port_in_use "$candidate"; then
+			printf '%s\n' "$candidate"
+			return 0
+		fi
+	done
+	printf '%s\n' "$candidate"
+}
+
+read_config_port() {
+	[ -f "$CONFIG_PATH" ] || return 1
+	as_root sed -n 's/.*"port"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$CONFIG_PATH" | head -n1
+}
+
+choose_port() {
+	local existing=''
+	if [ -n "$PORT" ]; then
+		validate_port "$PORT" || die "PORT must be a number between 1 and 65535"
+		return 0
+	fi
+
+	existing="$(read_config_port || true)"
+	if [ -n "$existing" ] && validate_port "$existing"; then
+		PORT="$existing"
+		ok "using existing config port: $PORT"
+		return 0
+	fi
+
+	PORT="$(random_port)"
+	ok "generated random panel port: $PORT"
 }
 
 detect_arch() {
@@ -564,13 +632,44 @@ json_escape() {
 	printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g; s/\t/\\t/g'
 }
 
-random_hex() {
-	if command -v openssl >/dev/null 2>&1; then
-		openssl rand -hex 32
-	else
-		dd if=/dev/urandom bs=32 count=1 2>/dev/null | od -An -tx1 | tr -d ' \n'
-		printf '\n'
+shell_quote() {
+	printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\"'\"'/g")"
+}
+
+read_panel_env_value() {
+	local key="$1"
+	[ -f "$PANEL_ENV_PATH" ] || return 1
+	as_root sed -n "s/^$key=//p" "$PANEL_ENV_PATH" \
+		| tail -n1 \
+		| sed "s/^'//; s/'$//; s/^\"//; s/\"$//"
+}
+
+write_panel_env() {
+	local tmp_env="$TMP_ROOT/panel.env"
+
+	as_root install -d -m 0755 "$CONFIG_DIR"
+	if [ -f "$PANEL_ENV_PATH" ] && [ -z "$ADMIN_USER" ] && [ -z "$ADMIN_PASS" ]; then
+		ADMIN_USER="$(read_panel_env_value OLCRTC_MANAGER_USER || true)"
+		ADMIN_PASS="$(read_panel_env_value OLCRTC_MANAGER_PASS || true)"
+		if [ -n "$ADMIN_USER" ] && [ -n "$ADMIN_PASS" ]; then
+			ok "keeping existing panel credentials: $PANEL_ENV_PATH"
+			return 0
+		fi
 	fi
+
+	if [ -z "$ADMIN_USER" ]; then
+		ADMIN_USER="admin-$(random_hex 4)"
+	fi
+	if [ -z "$ADMIN_PASS" ]; then
+		ADMIN_PASS="$(random_hex 18)"
+	fi
+
+	{
+		printf 'OLCRTC_MANAGER_USER=%s\n' "$(shell_quote "$ADMIN_USER")"
+		printf 'OLCRTC_MANAGER_PASS=%s\n' "$(shell_quote "$ADMIN_PASS")"
+	} >"$tmp_env"
+	as_root install -m 0600 "$tmp_env" "$PANEL_ENV_PATH"
+	ok "panel credentials installed: $PANEL_ENV_PATH"
 }
 
 generate_room_id() {
@@ -722,12 +821,18 @@ print_summary() {
 Installation complete.
 
 Panel:
-  http://$host:$PORT/admin
+  URL:      http://$host:$PORT/admin/
+  Login:    $ADMIN_USER
+  Password: $ADMIN_PASS
+
+Default client subscription:
+  http://$host:$PORT/sub/$CLIENT_ID
 
 Files:
   $BIN_DIR/olcrtc-manager
   $BIN_DIR/olcrtc
   $CONFIG_PATH
+  $PANEL_ENV_PATH
   $SERVICE_PATH
 
 Commands:
@@ -735,8 +840,7 @@ Commands:
   journalctl -u $SERVICE_NAME -f
   systemctl reload $SERVICE_NAME
 
-First run:
-  Open /admin and set the admin password. The installer does not create panel.env.
+Keep these credentials now. The password is stored in $PANEL_ENV_PATH.
 EOF
 }
 
@@ -749,7 +853,8 @@ main() {
 	step "Preparing system"
 	detect_arch
 	install_packages
-	need_commands tar gzip sed awk grep find install systemctl ip iptables tc
+	need_commands tar gzip xz sed awk grep find install systemctl openssl ip iptables tc
+	choose_port
 	check_port
 
 	obtain_binary "olcrtc-manager" "$PANEL_BINARY_URL" "$PANEL_REPO" "$PANEL_REF" "$manager_out" panel_src
@@ -758,6 +863,7 @@ main() {
 	step "Installing runtime files"
 	install_files "$manager_out" "$olcrtc_out"
 	write_config "$olcrtc_out"
+	write_panel_env
 	write_service
 	start_service
 	print_summary

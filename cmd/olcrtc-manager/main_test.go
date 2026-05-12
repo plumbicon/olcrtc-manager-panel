@@ -160,7 +160,7 @@ func TestSubscriptionHandlerServesClientPath(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/user/", nil)
+	req := httptest.NewRequest(http.MethodGet, "/sub/user", nil)
 	rec := httptest.NewRecorder()
 	subscriptionHandler(supervisor).ServeHTTP(rec, req)
 
@@ -180,7 +180,7 @@ func TestSubscriptionHandlerRejectsRootAndUnknownClient(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, path := range []string{"/", "/missing", "/user/extra"} {
+	for _, path := range []string{"/", "/missing", "/user/", "/sub", "/sub/", "/sub/missing", "/sub/user/extra"} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		rec := httptest.NewRecorder()
 		subscriptionHandler(supervisor).ServeHTTP(rec, req)
