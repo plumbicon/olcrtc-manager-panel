@@ -100,6 +100,22 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now olcrtc-manager
 ```
 
+## Удаление
+
+Полностью удалить панель, systemd unit, бинарники, конфиг, локальные toolchain-файлы и сетевые следы:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/plumbicon/olcrtc-manager-panel/main/uninstall.sh | sudo bash
+```
+
+Если нужно сохранить `/etc/olcrtc-manager`:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/plumbicon/olcrtc-manager-panel/main/uninstall.sh | sudo bash -s -- --keep-config
+```
+
+Скрипт также чистит `olc-*` network namespaces, `olh*` veth-интерфейсы, iptables-правила с комментариями `olcrtc-manager*` и cgroup-каталог менеджера. Системные пакеты вроде `curl`, `openssl`, `iptables` и `iproute2` не удаляются.
+
 ## Доступ к панели
 
 Откройте URL, который установщик вывел в конце. Путь панели:
