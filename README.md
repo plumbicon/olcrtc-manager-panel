@@ -19,7 +19,7 @@
 Запустите на Linux-сервере с systemd:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/BigDaddy3334/olcrtc-manager-panel/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/plumbicon/olcrtc-manager-panel/main/install.sh | sudo bash
 ```
 
 Установщик:
@@ -47,13 +47,13 @@ http://127.0.0.1:8888/admin
 
 ```sh
 # Использовать другой порт.
-curl -fsSL https://raw.githubusercontent.com/BigDaddy3334/olcrtc-manager-panel/main/install.sh | sudo bash -s -- --port 8080
+curl -fsSL https://raw.githubusercontent.com/plumbicon/olcrtc-manager-panel/main/install.sh | sudo bash -s -- --port 8080
 
 # Слушать на всех интерфейсах. В боевом окружении используйте firewall или обратный прокси.
-curl -fsSL https://raw.githubusercontent.com/BigDaddy3334/olcrtc-manager-panel/main/install.sh | sudo bash -s -- --addr 0.0.0.0
+curl -fsSL https://raw.githubusercontent.com/plumbicon/olcrtc-manager-panel/main/install.sh | sudo bash -s -- --addr 0.0.0.0
 
 # Использовать явные бинарные артефакты вместо сборки.
-curl -fsSL https://raw.githubusercontent.com/BigDaddy3334/olcrtc-manager-panel/main/install.sh | sudo bash -s -- \
+curl -fsSL https://raw.githubusercontent.com/plumbicon/olcrtc-manager-panel/main/install.sh | sudo bash -s -- \
   --panel-url https://example.com/olcrtc-manager-linux-amd64 \
   --olcrtc-url https://example.com/olcrtc-linux-amd64
 ```

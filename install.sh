@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-PANEL_REPO="${PANEL_REPO:-BigDaddy3334/olcrtc-manager-panel}"
+PANEL_REPO="${PANEL_REPO:-plumbicon/olcrtc-manager-panel}"
 PANEL_REF="${PANEL_REF:-main}"
 OLCRTC_REPO="${OLCRTC_REPO:-openlibrecommunity/olcrtc}"
 OLCRTC_REF="${OLCRTC_REF:-master}"
@@ -214,19 +214,44 @@ download_stdout() {
 install_packages() {
 	[ "$AUTO_INSTALL_DEPS" = "1" ] || return 0
 
+	local missing_runtime=''
+	local runtime_cmd
+	for runtime_cmd in curl tar gzip xz openssl ip iptables tc; do
+		if ! command -v "$runtime_cmd" >/dev/null 2>&1; then
+			missing_runtime="$missing_runtime $runtime_cmd"
+		fi
+	done
+	if [ -z "$missing_runtime" ]; then
+		ok "runtime tools found"
+		return 0
+	fi
+
+	step "Installing missing runtime tools:$missing_runtime"
+
 	local packages_debian='ca-certificates curl wget tar gzip xz-utils unzip openssl iproute2 iptables'
 	local packages_rhel='ca-certificates curl wget tar gzip xz unzip openssl iproute iptables'
 	local packages_arch='ca-certificates curl wget tar gzip xz unzip openssl iproute2 iptables'
 
 	if command -v apt-get >/dev/null 2>&1; then
-		as_root apt-get update
-		as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y $packages_debian
+		if ! as_root apt-get update; then
+			warn "apt-get update failed; continuing with existing package lists"
+			warn "if installation still fails, fix disabled/unsigned apt sources and rerun"
+		fi
+		if ! as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y $packages_debian; then
+			warn "apt-get install failed; continuing to final command checks"
+		fi
 	elif command -v dnf >/dev/null 2>&1; then
-		as_root dnf install -y $packages_rhel
+		if ! as_root dnf install -y $packages_rhel; then
+			warn "dnf install failed; continuing to final command checks"
+		fi
 	elif command -v yum >/dev/null 2>&1; then
-		as_root yum install -y $packages_rhel
+		if ! as_root yum install -y $packages_rhel; then
+			warn "yum install failed; continuing to final command checks"
+		fi
 	elif command -v pacman >/dev/null 2>&1; then
-		as_root pacman -Sy --needed --noconfirm $packages_arch
+		if ! as_root pacman -Sy --needed --noconfirm $packages_arch; then
+			warn "pacman install failed; continuing to final command checks"
+		fi
 	else
 		warn "unknown package manager; assuming base tools are already installed"
 	fi
