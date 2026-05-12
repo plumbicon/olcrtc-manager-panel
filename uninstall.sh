@@ -112,6 +112,10 @@ try() {
 	"$@" || warn "command failed: $*"
 }
 
+quiet_try() {
+	"$@" >/dev/null 2>&1 || true
+}
+
 safe_rm_rf() {
 	local path="$1"
 	local cleaned="${path%/}"
@@ -129,6 +133,48 @@ safe_rm_rf() {
 		else
 			warn "failed to remove $path"
 		fi
+	fi
+}
+
+remove_cgroup_tree() {
+	local root="$1"
+	local dir=''
+	local pids=''
+
+	[ -d "$root" ] || return 0
+
+	while read -r dir; do
+		[ -n "$dir" ] || continue
+
+		if [ -r "$dir/cgroup.procs" ]; then
+			pids="$(as_root cat "$dir/cgroup.procs" 2>/dev/null || true)"
+			if [ -n "$pids" ]; then
+				while read -r pid; do
+					[ -n "$pid" ] || continue
+					as_root kill "$pid" 2>/dev/null || true
+				done <<EOF
+$pids
+EOF
+				sleep 1
+				while read -r pid; do
+					[ -n "$pid" ] || continue
+					as_root kill -9 "$pid" 2>/dev/null || true
+				done <<EOF
+$pids
+EOF
+			fi
+		fi
+
+		if as_root rmdir "$dir" 2>/dev/null; then
+			ok "removed cgroup $dir"
+		fi
+	done <<EOF
+$(find "$root" -depth -type d 2>/dev/null || true)
+EOF
+
+	if [ -d "$root" ]; then
+		warn "cgroup still exists: $root"
+		warn "this usually means the kernel has live tasks there; reboot will clear an empty stale cgroup"
 	fi
 }
 
@@ -166,7 +212,7 @@ remove_service() {
 	as_root rm -f -- "$SERVICE_PATH"
 	if command -v systemctl >/dev/null 2>&1; then
 		try as_root systemctl daemon-reload
-		try as_root systemctl reset-failed "$SERVICE_NAME"
+		quiet_try as_root systemctl reset-failed "$SERVICE_NAME"
 	fi
 	ok "service unit removed"
 }
@@ -241,7 +287,7 @@ remove_files() {
 		safe_rm_rf "$TOOL_ROOT"
 	fi
 
-	safe_rm_rf "/sys/fs/cgroup/net_cls,net_prio/olcrtc-manager"
+	remove_cgroup_tree "/sys/fs/cgroup/net_cls,net_prio/olcrtc-manager"
 
 	if [ -d /etc/netns ]; then
 		while read -r ns_dir; do
