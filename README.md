@@ -16,15 +16,18 @@
 
 ## Быстрая установка
 
-Запустите на Linux-сервере с systemd:
+Создайте DNS-запись, которая указывает домен на IP сервера. Затем запустите на Linux-сервере с systemd:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/plumbicon/olcrtc-manager-panel/main/install.sh | sudo bash
+curl -fsSL https://raw.githubusercontent.com/plumbicon/olcrtc-manager-panel/main/install.sh | sudo bash -s -- \
+  --domain panel.example.com \
+  --email admin@example.com
 ```
 
 Установщик:
 
-- устанавливает/проверяет runtime-инструменты: `ip`, `iptables`, `tc`, `systemctl`;
+- устанавливает/проверяет runtime-инструменты: `ip`, `iptables`, `tc`, `systemctl`, `certbot`;
+- получает TLS-сертификат Let's Encrypt для указанного домена;
 - устанавливает `/usr/local/bin/olcrtc-manager`;
 - устанавливает `/usr/local/bin/olcrtc`;
 - создает `/etc/olcrtc-manager/config.json`, если его еще нет;
@@ -33,19 +36,19 @@ curl -fsSL https://raw.githubusercontent.com/plumbicon/olcrtc-manager-panel/main
 - устанавливает и запускает `olcrtc-manager.service`;
 - выводит адрес панели и учетные данные в конце установки.
 
-По умолчанию порт выбирается случайно. В конце установки будет напечатано примерно так:
+По умолчанию панель слушает все интерфейсы, порт выбирается случайно, транспорт - HTTPS. В конце установки будет напечатано примерно так:
 
 ```text
 Panel:
-  URL:      http://127.0.0.1:25473/admin/
+  URL:      https://panel.example.com:25473/admin/
   Login:    admin-3f8a91c2
   Password: 5d9e6f0e8a4b1c2d3e4f5a6b7c8d9e0f1234
 
 Default client subscription:
-  http://127.0.0.1:25473/sub/default
+  https://panel.example.com:25473/sub/default
 ```
 
-Для прямого доступа используйте `--addr 0.0.0.0`, либо оставьте значение по умолчанию и опубликуйте панель через обратный прокси.
+Для выпуска сертификата порт `80/tcp` должен быть доступен снаружи на время установки. После установки снаружи должен быть открыт случайный порт панели, который скрипт выведет в конце.
 
 Если в GitHub Releases есть готовые бинарники, установщик использует их. Иначе он скачивает архивы исходников и собирает все во временной директории. Для `olcrtc` это сейчас обычный путь, потому что основной репозиторий не публикует бинарники релизов.
 
@@ -55,13 +58,19 @@ Default client subscription:
 
 ```sh
 # Использовать другой порт.
-curl -fsSL https://raw.githubusercontent.com/plumbicon/olcrtc-manager-panel/main/install.sh | sudo bash -s -- --port 8080
+curl -fsSL https://raw.githubusercontent.com/plumbicon/olcrtc-manager-panel/main/install.sh | sudo bash -s -- \
+  --domain panel.example.com \
+  --port 8443
 
-# Слушать на всех интерфейсах. В боевом окружении используйте firewall или обратный прокси.
-curl -fsSL https://raw.githubusercontent.com/plumbicon/olcrtc-manager-panel/main/install.sh | sudo bash -s -- --addr 0.0.0.0
+# Использовать уже существующий сертификат.
+curl -fsSL https://raw.githubusercontent.com/plumbicon/olcrtc-manager-panel/main/install.sh | sudo bash -s -- \
+  --domain panel.example.com \
+  --tls-cert /path/fullchain.pem \
+  --tls-key /path/privkey.pem
 
 # Использовать явные бинарные артефакты вместо сборки.
 curl -fsSL https://raw.githubusercontent.com/plumbicon/olcrtc-manager-panel/main/install.sh | sudo bash -s -- \
+  --domain panel.example.com \
   --panel-url https://example.com/olcrtc-manager-linux-amd64 \
   --olcrtc-url https://example.com/olcrtc-linux-amd64
 ```
@@ -71,7 +80,11 @@ curl -fsSL https://raw.githubusercontent.com/plumbicon/olcrtc-manager-panel/main
 - `PANEL_REF`: ветка/тег/commit этого репозитория, по умолчанию `main`;
 - `OLCRTC_REF`: ветка/тег/commit репозитория `openlibrecommunity/olcrtc`, по умолчанию `master`;
 - `PORT`: порт панели; если не задан, на свежей установке будет выбран случайный свободный порт;
-- `LISTEN_ADDR`: адрес прослушивания, по умолчанию `127.0.0.1`;
+- `LISTEN_ADDR`: адрес прослушивания, по умолчанию `0.0.0.0`;
+- `DOMAIN`: публичный домен для сертификата Let's Encrypt;
+- `ACME_EMAIL`: email для регистрации Let's Encrypt;
+- `TLS_CERT_PATH` и `TLS_KEY_PATH`: использовать существующий сертификат вместо выпуска через certbot;
+- `ENABLE_HTTPS=0`: отключить HTTPS и запустить обычный HTTP-режим;
 - `ADMIN_USER` и `ADMIN_PASS`: использовать заданные логин и пароль вместо случайных;
 - `ROOM_ID` и `ENDPOINT_KEY`: использовать заранее сгенерированные начальные значения endpoint;
 - `SPEED_MBPS`, `TRAFFIC_GB`, `EXPIRES_AT`: начальная квота клиента по умолчанию.
@@ -114,14 +127,16 @@ curl -fsSL https://raw.githubusercontent.com/plumbicon/olcrtc-manager-panel/main
 curl -fsSL https://raw.githubusercontent.com/plumbicon/olcrtc-manager-panel/main/uninstall.sh | sudo bash -s -- --keep-config
 ```
 
-Скрипт также чистит `olc-*` network namespaces, `olh*` veth-интерфейсы, iptables-правила с комментариями `olcrtc-manager*` и cgroup-каталог менеджера. Системные пакеты вроде `curl`, `openssl`, `iptables` и `iproute2` не удаляются.
+Чтобы оставить сертификат Let's Encrypt, добавьте `--keep-certs`.
+
+Скрипт также чистит `olc-*` network namespaces, `olh*` veth-интерфейсы, iptables-правила с комментариями `olcrtc-manager*`, cgroup-каталог менеджера и сертификат Let's Encrypt, если он был выпущен установщиком. Системные пакеты вроде `curl`, `openssl`, `iptables`, `iproute2` и `certbot` не удаляются.
 
 ## Доступ к панели
 
 Откройте URL, который установщик вывел в конце. Путь панели:
 
 ```text
-http://SERVER:RANDOM_PORT/admin/
+https://DOMAIN:RANDOM_PORT/admin/
 ```
 
 Логин и пароль установщик записывает сюда:
@@ -141,7 +156,7 @@ OLCRTC_MANAGER_PASS='5d9e6f0e8a4b1c2d3e4f5a6b7c8d9e0f1234'
 
 ## Обратный прокси
 
-По умолчанию менеджер слушает `127.0.0.1`. Чтобы опубликовать его через nginx:
+Обратный прокси больше не обязателен: установщик умеет выпускать сертификат и запускать панель по HTTPS напрямую. Если все же хотите закрыть панель за nginx, установите ее с `--addr 127.0.0.1`, а затем проксируйте локальный HTTPS backend:
 
 ```nginx
 server {
@@ -152,7 +167,8 @@ server {
     ssl_certificate_key /path/privkey.pem;
 
     location / {
-        proxy_pass http://127.0.0.1:RANDOM_PORT;
+        proxy_pass https://127.0.0.1:RANDOM_PORT;
+        proxy_ssl_verify off;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
@@ -244,7 +260,7 @@ iptables -t nat -S POSTROUTING | grep olcrtc-manager-netns
 Подписка клиента:
 
 ```text
-http://127.0.0.1:RANDOM_PORT/sub/<client-id>
+https://DOMAIN:RANDOM_PORT/sub/<client-id>
 ```
 
 Если квота настроена, подписка содержит ее метаданные:
@@ -275,7 +291,7 @@ sudo systemctl reload olcrtc-manager
 Или локально:
 
 ```sh
-curl -X POST http://127.0.0.1:RANDOM_PORT/-/reload
+curl -X POST https://DOMAIN:RANDOM_PORT/-/reload
 ```
 
 ## API и авторизация панели
@@ -298,4 +314,4 @@ scripts/modify-user.sh /etc/olcrtc-manager/config.json alice --location-name Ger
 scripts/delete-user.sh /etc/olcrtc-manager/config.json alice
 ```
 
-Передайте `--reload http://127.0.0.1:RANDOM_PORT/-/reload`, чтобы перезагрузить запущенный менеджер после сохранения конфига.
+Передайте `--reload https://DOMAIN:RANDOM_PORT/-/reload`, чтобы перезагрузить запущенный менеджер после сохранения конфига.

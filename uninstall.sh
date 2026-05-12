@@ -9,9 +9,13 @@ CONFIG_DIR="${CONFIG_DIR:-/etc/olcrtc-manager}"
 SERVICE_NAME="${SERVICE_NAME:-olcrtc-manager}"
 SERVICE_PATH="${SERVICE_PATH:-/etc/systemd/system/$SERVICE_NAME.service}"
 TOOL_ROOT="${TOOL_ROOT:-/usr/local/lib/olcrtc-manager}"
+TLS_CERT_PATH="${TLS_CERT_PATH:-}"
+TLS_KEY_PATH="${TLS_KEY_PATH:-}"
+TLS_MANAGED="${TLS_MANAGED:-}"
 
 KEEP_CONFIG=0
 KEEP_TOOLS=0
+KEEP_CERTS=0
 SKIP_NETWORK=0
 
 red=''
@@ -55,11 +59,12 @@ Usage:
 Options:
   --keep-config     Do not remove $CONFIG_DIR
   --keep-tools      Do not remove $TOOL_ROOT
+  --keep-certs      Do not remove Let's Encrypt certificate files
   --skip-network    Do not remove olc-* netns, olh* links, cgroups, or iptables rules
   -h, --help        Show this help
 
 Environment:
-  BIN_DIR, CONFIG_DIR, SERVICE_NAME, SERVICE_PATH, TOOL_ROOT
+  BIN_DIR, CONFIG_DIR, SERVICE_NAME, SERVICE_PATH, TOOL_ROOT, TLS_CERT_PATH, TLS_KEY_PATH, TLS_MANAGED
 EOF
 }
 
@@ -71,6 +76,10 @@ while [ "$#" -gt 0 ]; do
 			;;
 		--keep-tools)
 			KEEP_TOOLS=1
+			shift
+			;;
+		--keep-certs)
+			KEEP_CERTS=1
 			shift
 			;;
 		--skip-network)
@@ -136,6 +145,24 @@ safe_rm_rf() {
 	fi
 }
 
+service_env_value() {
+	local key="$1"
+	[ -f "$SERVICE_PATH" ] || return 1
+	sed -n "s/^Environment=$key=//p" "$SERVICE_PATH" | tail -n1
+}
+
+capture_tls_paths() {
+	if [ -z "$TLS_CERT_PATH" ]; then
+		TLS_CERT_PATH="$(service_env_value OLCRTC_MANAGER_TLS_CERT || true)"
+	fi
+	if [ -z "$TLS_KEY_PATH" ]; then
+		TLS_KEY_PATH="$(service_env_value OLCRTC_MANAGER_TLS_KEY || true)"
+	fi
+	if [ -z "$TLS_MANAGED" ]; then
+		TLS_MANAGED="$(service_env_value OLCRTC_MANAGER_TLS_MANAGED || true)"
+	fi
+}
+
 remove_cgroup_tree() {
 	local root="$1"
 	local dir=''
@@ -176,6 +203,35 @@ EOF
 		warn "cgroup still exists: $root"
 		warn "this usually means the kernel has live tasks there; reboot will clear an empty stale cgroup"
 	fi
+}
+
+remove_certs() {
+	local live_dir=''
+	local domain=''
+
+	if [ "$KEEP_CERTS" -eq 1 ]; then
+		warn "keeping TLS certificate files"
+		return 0
+	fi
+	[ -n "$TLS_CERT_PATH" ] || return 0
+	if [ "$TLS_MANAGED" != "letsencrypt" ]; then
+		warn "not removing TLS certificate because it is not marked as installer-managed: $TLS_CERT_PATH"
+		return 0
+	fi
+
+	case "$TLS_CERT_PATH" in
+		/etc/letsencrypt/live/*/fullchain.pem)
+			live_dir="$(dirname "$TLS_CERT_PATH")"
+			domain="$(basename "$live_dir")"
+			safe_rm_rf "/etc/letsencrypt/live/$domain"
+			safe_rm_rf "/etc/letsencrypt/archive/$domain"
+			as_root rm -f -- "/etc/letsencrypt/renewal/$domain.conf"
+			ok "removed Let's Encrypt certificate for $domain"
+			;;
+		*)
+			warn "not removing custom TLS certificate path: $TLS_CERT_PATH"
+			;;
+	esac
 }
 
 delete_iptables_comment() {
@@ -287,6 +343,8 @@ remove_files() {
 		safe_rm_rf "$TOOL_ROOT"
 	fi
 
+	remove_certs
+
 	remove_cgroup_tree "/sys/fs/cgroup/net_cls,net_prio/olcrtc-manager"
 
 	if [ -d /etc/netns ]; then
@@ -300,6 +358,7 @@ EOF
 }
 
 main() {
+	capture_tls_paths
 	stop_service
 	cleanup_network
 	remove_service

@@ -190,6 +190,31 @@ func TestSubscriptionHandlerRejectsRootAndUnknownClient(t *testing.T) {
 	}
 }
 
+func TestSecurityHeadersAddsHSTSWhenTLSIsEnabled(t *testing.T) {
+	handler := securityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}), true)
+
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	if got := rec.Header().Get("Strict-Transport-Security"); got == "" {
+		t.Fatal("Strict-Transport-Security header was not set")
+	}
+}
+
+func TestServerTLSConfigRequiresCertAndKeyTogether(t *testing.T) {
+	if cfg, err := serverTLSConfig("", ""); err != nil || cfg != nil {
+		t.Fatalf("serverTLSConfig empty = %#v, %v; want nil, nil", cfg, err)
+	}
+	if _, err := serverTLSConfig("cert.pem", ""); err == nil {
+		t.Fatal("expected error when TLS certificate is set without a key")
+	}
+	if _, err := serverTLSConfig("", "key.pem"); err == nil {
+		t.Fatal("expected error when TLS key is set without a certificate")
+	}
+}
+
 func TestFirstRunSetupCreatesAdminSession(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.json")

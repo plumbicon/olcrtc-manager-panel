@@ -14,8 +14,14 @@ SERVICE_NAME="${SERVICE_NAME:-olcrtc-manager}"
 SERVICE_PATH="${SERVICE_PATH:-/etc/systemd/system/$SERVICE_NAME.service}"
 TOOL_DIR="${TOOL_DIR:-/usr/local/lib/olcrtc-manager/tools}"
 
-LISTEN_ADDR="${LISTEN_ADDR:-127.0.0.1}"
+LISTEN_ADDR="${LISTEN_ADDR:-0.0.0.0}"
 PORT="${PORT:-}"
+DOMAIN="${DOMAIN:-}"
+ACME_EMAIL="${ACME_EMAIL:-}"
+ENABLE_HTTPS="${ENABLE_HTTPS:-1}"
+TLS_CERT_PATH="${TLS_CERT_PATH:-}"
+TLS_KEY_PATH="${TLS_KEY_PATH:-}"
+TLS_MANAGED="${TLS_MANAGED:-}"
 PANEL_NAME="${PANEL_NAME:-OlcRTC VPS}"
 CLIENT_ID="${CLIENT_ID:-default}"
 LOCATION_NAME="${LOCATION_NAME:-Current VPS}"
@@ -91,6 +97,11 @@ Usage:
 Options:
   --port PORT              Panel port, default: random on fresh install
   --addr ADDR              Listen address, default: $LISTEN_ADDR
+  --domain DOMAIN          Public domain for HTTPS certificate
+  --email EMAIL            Email for Let's Encrypt registration
+  --tls-cert PATH          Existing TLS certificate PEM path
+  --tls-key PATH           Existing TLS private key PEM path
+  --no-https               Disable HTTPS and run plain HTTP
   --panel-ref REF          olcrtc-manager ref to build from, default: $PANEL_REF
   --olcrtc-ref REF         olcrtc ref to build from, default: $OLCRTC_REF
   --panel-url URL          Direct olcrtc-manager binary/archive URL
@@ -103,6 +114,7 @@ Options:
 Environment:
   PANEL_REPO, PANEL_REF, OLCRTC_REPO, OLCRTC_REF
   BIN_DIR, CONFIG_DIR, PANEL_ENV_PATH, LISTEN_ADDR, PORT
+  DOMAIN, ACME_EMAIL, ENABLE_HTTPS, TLS_CERT_PATH, TLS_KEY_PATH
   CLIENT_ID, LOCATION_NAME, CARRIER, TRANSPORT, DNS_SERVER
   ROOM_ID, ENDPOINT_KEY, SPEED_MBPS, TRAFFIC_GB, EXPIRES_AT
   ADMIN_USER, ADMIN_PASS
@@ -119,6 +131,26 @@ while [ "$#" -gt 0 ]; do
 		--addr)
 			LISTEN_ADDR="${2:-}"
 			shift 2
+			;;
+		--domain)
+			DOMAIN="${2:-}"
+			shift 2
+			;;
+		--email)
+			ACME_EMAIL="${2:-}"
+			shift 2
+			;;
+		--tls-cert)
+			TLS_CERT_PATH="${2:-}"
+			shift 2
+			;;
+		--tls-key)
+			TLS_KEY_PATH="${2:-}"
+			shift 2
+			;;
+		--no-https)
+			ENABLE_HTTPS=0
+			shift
 			;;
 		--panel-ref)
 			PANEL_REF="${2:-}"
@@ -161,6 +193,67 @@ done
 
 if [ -z "$PANEL_ENV_PATH" ]; then
 	PANEL_ENV_PATH="$CONFIG_DIR/panel.env"
+fi
+
+service_env_value() {
+	local key="$1"
+	[ -f "$SERVICE_PATH" ] || return 1
+	sed -n "s/^Environment=$key=//p" "$SERVICE_PATH" | tail -n1
+}
+
+capture_existing_tls_paths() {
+	local existing_cert=''
+	local existing_key=''
+	local existing_managed=''
+	local live_dir=''
+
+	[ "$ENABLE_HTTPS" = "1" ] || return 0
+
+	existing_cert="$(service_env_value OLCRTC_MANAGER_TLS_CERT || true)"
+	existing_key="$(service_env_value OLCRTC_MANAGER_TLS_KEY || true)"
+	existing_managed="$(service_env_value OLCRTC_MANAGER_TLS_MANAGED || true)"
+
+	if [ -z "$DOMAIN" ]; then
+		if [ -z "$TLS_CERT_PATH" ]; then
+			TLS_CERT_PATH="$existing_cert"
+		fi
+		if [ -z "$TLS_KEY_PATH" ]; then
+			TLS_KEY_PATH="$existing_key"
+		fi
+	fi
+	if [ -z "$TLS_MANAGED" ] && [ -n "$existing_managed" ] \
+		&& [ "$TLS_CERT_PATH" = "$existing_cert" ] && [ "$TLS_KEY_PATH" = "$existing_key" ]; then
+		TLS_MANAGED="$existing_managed"
+	fi
+
+	if [ -z "$DOMAIN" ]; then
+		case "$TLS_CERT_PATH" in
+			/etc/letsencrypt/live/*/fullchain.pem)
+				live_dir="$(dirname "$TLS_CERT_PATH")"
+				DOMAIN="$(basename "$live_dir")"
+				;;
+		esac
+	fi
+}
+
+capture_existing_tls_paths
+
+if [ "$ENABLE_HTTPS" != "0" ] && [ "$ENABLE_HTTPS" != "1" ]; then
+	die "ENABLE_HTTPS must be 0 or 1"
+fi
+
+if [ "$ENABLE_HTTPS" = "1" ]; then
+	if [ -n "$TLS_CERT_PATH" ] || [ -n "$TLS_KEY_PATH" ]; then
+		if [ -z "$TLS_CERT_PATH" ] || [ -z "$TLS_KEY_PATH" ]; then
+			die "both TLS_CERT_PATH and TLS_KEY_PATH are required when using an existing certificate"
+		fi
+	else
+		if [ -z "$DOMAIN" ]; then
+			die "DOMAIN is required for HTTPS. Example: sudo DOMAIN=panel.example.com bash install.sh"
+		fi
+		TLS_CERT_PATH="/etc/letsencrypt/live/$DOMAIN/fullchain.pem"
+		TLS_KEY_PATH="/etc/letsencrypt/live/$DOMAIN/privkey.pem"
+	fi
 fi
 
 if [ -n "$PORT" ] && { ! [[ "$PORT" =~ ^[0-9]+$ ]] || [ "$PORT" -lt 1 ] || [ "$PORT" -gt 65535 ]; }; then
@@ -229,6 +322,9 @@ install_packages() {
 			missing_runtime="$missing_runtime $runtime_cmd"
 		fi
 	done
+	if needs_certbot && ! command -v certbot >/dev/null 2>&1; then
+		missing_runtime="$missing_runtime certbot"
+	fi
 	if [ -z "$missing_runtime" ]; then
 		ok "runtime tools found"
 		return 0
@@ -239,6 +335,11 @@ install_packages() {
 	local packages_debian='ca-certificates curl wget tar gzip xz-utils unzip openssl iproute2 iptables'
 	local packages_rhel='ca-certificates curl wget tar gzip xz unzip openssl iproute iptables'
 	local packages_arch='ca-certificates curl wget tar gzip xz unzip openssl iproute2 iptables'
+	if needs_certbot; then
+		packages_debian="$packages_debian certbot"
+		packages_rhel="$packages_rhel certbot"
+		packages_arch="$packages_arch certbot"
+	fi
 
 	if command -v apt-get >/dev/null 2>&1; then
 		if ! as_root apt-get update; then
@@ -276,6 +377,13 @@ need_commands() {
 	if [ -n "$missing" ]; then
 		die "missing required commands:$missing"
 	fi
+}
+
+needs_certbot() {
+	[ "$ENABLE_HTTPS" = "1" ] || return 1
+	[ -n "$DOMAIN" ] || return 1
+	[ -f "$TLS_CERT_PATH" ] && [ -f "$TLS_KEY_PATH" ] && return 1
+	return 0
 }
 
 validate_port() {
@@ -672,6 +780,43 @@ write_panel_env() {
 	ok "panel credentials installed: $PANEL_ENV_PATH"
 }
 
+obtain_tls_certificate() {
+	local email_args=()
+
+	[ "$ENABLE_HTTPS" = "1" ] || return 0
+
+	if [ -f "$TLS_CERT_PATH" ] && [ -f "$TLS_KEY_PATH" ]; then
+		ok "using existing TLS certificate: $TLS_CERT_PATH"
+		return 0
+	fi
+
+	[ -n "$DOMAIN" ] || die "DOMAIN is required to issue a Let's Encrypt certificate"
+	command -v certbot >/dev/null 2>&1 || die "certbot is required to issue the HTTPS certificate"
+
+	step "Obtaining Let's Encrypt certificate for $DOMAIN"
+	if port_in_use 80; then
+		warn "port 80 appears to be in use; certbot standalone HTTP-01 challenge may fail"
+	fi
+	if [ -n "$ACME_EMAIL" ]; then
+		email_args=(--email "$ACME_EMAIL")
+	else
+		email_args=(--register-unsafely-without-email)
+	fi
+
+	as_root certbot certonly \
+		--standalone \
+		--non-interactive \
+		--agree-tos \
+		--preferred-challenges http \
+		"${email_args[@]}" \
+		-d "$DOMAIN"
+
+	[ -f "$TLS_CERT_PATH" ] || die "certificate was not created at $TLS_CERT_PATH"
+	[ -f "$TLS_KEY_PATH" ] || die "private key was not created at $TLS_KEY_PATH"
+	TLS_MANAGED='letsencrypt'
+	ok "TLS certificate ready: $TLS_CERT_PATH"
+}
+
 generate_room_id() {
 	local olcrtc_bin="$1"
 	"$olcrtc_bin" -mode gen -carrier "$CARRIER" -dns "$DNS_SERVER" -amount 1 \
@@ -742,6 +887,15 @@ EOF
 
 write_service() {
 	local tmp_service="$TMP_ROOT/$SERVICE_NAME.service"
+	local tls_env=''
+	if [ "$ENABLE_HTTPS" = "1" ]; then
+		tls_env="Environment=OLCRTC_MANAGER_TLS_CERT=$TLS_CERT_PATH
+Environment=OLCRTC_MANAGER_TLS_KEY=$TLS_KEY_PATH"
+		if [ -n "$TLS_MANAGED" ]; then
+			tls_env="$tls_env
+Environment=OLCRTC_MANAGER_TLS_MANAGED=$TLS_MANAGED"
+		fi
+	fi
 	cat >"$tmp_service" <<EOF
 [Unit]
 Description=OlcRTC Manager Panel
@@ -753,6 +907,7 @@ Wants=network-online.target
 Type=simple
 Environment=OLCRTC_PATH=$BIN_DIR/olcrtc
 Environment=OLCRTC_MANAGER_ADDR=$LISTEN_ADDR
+$tls_env
 ExecStart=$BIN_DIR/olcrtc-manager -config $CONFIG_PATH -port $PORT
 ExecReload=/bin/kill -HUP \$MAINPID
 Restart=on-failure
@@ -809,8 +964,14 @@ start_service() {
 print_summary() {
 	local host='SERVER'
 	local public_ip=''
+	local scheme='http'
+	if [ "$ENABLE_HTTPS" = "1" ]; then
+		scheme='https'
+	fi
 	public_ip="$(download_stdout 'https://api.ipify.org' 2>/dev/null || true)"
-	if [ "$LISTEN_ADDR" = "127.0.0.1" ] || [ "$LISTEN_ADDR" = "localhost" ]; then
+	if [ -n "$DOMAIN" ]; then
+		host="$DOMAIN"
+	elif [ "$LISTEN_ADDR" = "127.0.0.1" ] || [ "$LISTEN_ADDR" = "localhost" ]; then
 		host='127.0.0.1'
 	elif [ -n "$public_ip" ]; then
 		host="$public_ip"
@@ -821,12 +982,12 @@ print_summary() {
 Installation complete.
 
 Panel:
-  URL:      http://$host:$PORT/admin/
+  URL:      $scheme://$host:$PORT/admin/
   Login:    $ADMIN_USER
   Password: $ADMIN_PASS
 
 Default client subscription:
-  http://$host:$PORT/sub/$CLIENT_ID
+  $scheme://$host:$PORT/sub/$CLIENT_ID
 
 Files:
   $BIN_DIR/olcrtc-manager
@@ -834,7 +995,16 @@ Files:
   $CONFIG_PATH
   $PANEL_ENV_PATH
   $SERVICE_PATH
+EOF
 
+	if [ "$ENABLE_HTTPS" = "1" ]; then
+		cat <<EOF
+  $TLS_CERT_PATH
+  $TLS_KEY_PATH
+EOF
+	fi
+
+	cat <<EOF
 Commands:
   systemctl status $SERVICE_NAME
   journalctl -u $SERVICE_NAME -f
@@ -854,6 +1024,9 @@ main() {
 	detect_arch
 	install_packages
 	need_commands tar gzip xz sed awk grep find install systemctl openssl ip iptables tc
+	if needs_certbot; then
+		need_commands certbot
+	fi
 	choose_port
 	check_port
 
@@ -864,6 +1037,7 @@ main() {
 	install_files "$manager_out" "$olcrtc_out"
 	write_config "$olcrtc_out"
 	write_panel_env
+	obtain_tls_certificate
 	write_service
 	start_service
 	print_summary

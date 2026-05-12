@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
+	"crypto/tls"
 	"embed"
 	"encoding/hex"
 	"encoding/json"
@@ -179,9 +180,13 @@ func run() error {
 	var configPath string
 	var port int
 	var listenAddr string
+	var tlsCertPath string
+	var tlsKeyPath string
 	flag.StringVar(&configPath, "config", "", "path to olcrtc-manager JSON config")
-	flag.IntVar(&port, "port", 0, "HTTP listen port; overrides config.port")
-	flag.StringVar(&listenAddr, "addr", envDefault("OLCRTC_MANAGER_ADDR", "127.0.0.1"), "HTTP listen address")
+	flag.IntVar(&port, "port", 0, "HTTP/HTTPS listen port; overrides config.port")
+	flag.StringVar(&listenAddr, "addr", envDefault("OLCRTC_MANAGER_ADDR", "127.0.0.1"), "HTTP/HTTPS listen address")
+	flag.StringVar(&tlsCertPath, "tls-cert", envDefault("OLCRTC_MANAGER_TLS_CERT", ""), "path to TLS certificate PEM")
+	flag.StringVar(&tlsKeyPath, "tls-key", envDefault("OLCRTC_MANAGER_TLS_KEY", ""), "path to TLS private key PEM")
 	flag.Parse()
 
 	if configPath == "" {
@@ -197,6 +202,10 @@ func run() error {
 		cfg.Port = port
 	}
 	if err := cfg.Validate(); err != nil {
+		return err
+	}
+	tlsConfig, err := serverTLSConfig(tlsCertPath, tlsKeyPath)
+	if err != nil {
 		return err
 	}
 
@@ -467,14 +476,24 @@ func run() error {
 
 	server := &http.Server{
 		Addr:              net.JoinHostPort(listenAddr, strconv.Itoa(cfg.Port)),
-		Handler:           securityHeaders(handler),
+		Handler:           securityHeaders(handler, tlsConfig != nil),
 		ReadHeaderTimeout: 5 * time.Second,
+		TLSConfig:         tlsConfig,
 	}
 
 	errc := make(chan error, 1)
 	go func() {
-		log.Printf("serving subscription and admin panel on %s", server.Addr)
-		if err := server.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
+		scheme := "http"
+		var err error
+		if tlsConfig != nil {
+			scheme = "https"
+			log.Printf("serving subscription and admin panel on %s://%s", scheme, server.Addr)
+			err = server.ListenAndServeTLS("", "")
+		} else {
+			log.Printf("serving subscription and admin panel on %s://%s", scheme, server.Addr)
+			err = server.ListenAndServe()
+		}
+		if !errors.Is(err, http.ErrServerClosed) {
 			errc <- err
 			return
 		}
@@ -2895,14 +2914,42 @@ func writeJSONStatus(w http.ResponseWriter, status int, v any) {
 	_ = enc.Encode(v)
 }
 
-func securityHeaders(next http.Handler) http.Handler {
+func securityHeaders(next http.Handler, tlsEnabled bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; img-src 'self' data: https://api.qrserver.com; style-src 'self' 'unsafe-inline'; script-src 'self'")
+		if tlsEnabled {
+			w.Header().Set("Strict-Transport-Security", "max-age=31536000")
+		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func serverTLSConfig(certPath, keyPath string) (*tls.Config, error) {
+	if certPath == "" && keyPath == "" {
+		return nil, nil
+	}
+	if certPath == "" || keyPath == "" {
+		return nil, errors.New("both -tls-cert and -tls-key are required for HTTPS")
+	}
+	if _, err := os.Stat(certPath); err != nil {
+		return nil, fmt.Errorf("read TLS certificate: %w", err)
+	}
+	if _, err := os.Stat(keyPath); err != nil {
+		return nil, fmt.Errorf("read TLS private key: %w", err)
+	}
+	return &tls.Config{
+		MinVersion: tls.VersionTLS12,
+		GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+			cert, err := tls.LoadX509KeyPair(certPath, keyPath)
+			if err != nil {
+				return nil, err
+			}
+			return &cert, nil
+		},
+	}, nil
 }
 
 func clientIDFromPath(path string) (string, bool) {
