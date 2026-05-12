@@ -1,77 +1,77 @@
 # olcrtc-manager-panel
 
-Web panel and process manager for running multiple `olcrtc` server instances.
+Веб-панель и менеджер процессов для запуска нескольких серверных инстансов `olcrtc`.
 
-Version 2 includes:
+Версия 2 включает:
 
-- admin panel at `/admin`;
-- first-run password setup;
-- client creation, edit, delete, room/key rotation, restart, logs, QR, subscription export;
-- per-client subscriptions at `/<client-id>/`;
-- traffic quota metadata in subscriptions;
-- automatic incoming traffic accounting;
-- traffic limit and expiration blocking;
-- speed limits through per-client `network namespace` + `veth`;
-- one isolated `olcrtc` process per client location.
+- админ-панель на `/admin`;
+- настройку пароля при первом запуске;
+- создание, редактирование и удаление клиентов, ротацию room/key, рестарт, логи, QR-коды и экспорт подписок;
+- отдельные подписки для клиентов на `/<client-id>/`;
+- метаданные квот трафика в подписках;
+- автоматический учет входящего трафика;
+- блокировку по лимиту трафика и сроку действия;
+- ограничение скорости через отдельный `network namespace` + `veth` для каждого клиента;
+- один изолированный процесс `olcrtc` на каждую локацию клиента.
 
-## Quick Install
+## Быстрая установка
 
-Run this on a systemd-based Linux server:
+Запустите на Linux-сервере с systemd:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/BigDaddy3334/olcrtc-manager-panel/main/install.sh | sudo bash
 ```
 
-The installer:
+Установщик:
 
-- installs/checks runtime tools: `ip`, `iptables`, `tc`, `systemctl`;
-- installs `/usr/local/bin/olcrtc-manager`;
-- installs `/usr/local/bin/olcrtc`;
-- creates `/etc/olcrtc-manager/config.json` if it does not exist;
-- installs and starts `olcrtc-manager.service`;
-- leaves `/etc/olcrtc-manager/panel.env` absent so first-run password setup works.
+- устанавливает/проверяет runtime-инструменты: `ip`, `iptables`, `tc`, `systemctl`;
+- устанавливает `/usr/local/bin/olcrtc-manager`;
+- устанавливает `/usr/local/bin/olcrtc`;
+- создает `/etc/olcrtc-manager/config.json`, если его еще нет;
+- устанавливает и запускает `olcrtc-manager.service`;
+- не создает `/etc/olcrtc-manager/panel.env`, чтобы сработала настройка пароля при первом запуске.
 
-The panel listens on `127.0.0.1:8888` by default:
+По умолчанию панель слушает `127.0.0.1:8888`:
 
 ```text
 http://127.0.0.1:8888/admin
 ```
 
-Use `--addr 0.0.0.0` for direct access, or keep the default and publish it through a reverse proxy.
+Для прямого доступа используйте `--addr 0.0.0.0`, либо оставьте значение по умолчанию и опубликуйте панель через обратный прокси.
 
-If there are GitHub release binaries, the installer uses them. Otherwise it downloads source archives and builds in a temporary directory. For `olcrtc`, this is currently the normal path because upstream does not publish release binaries.
+Если в GitHub Releases есть готовые бинарники, установщик использует их. Иначе он скачивает архивы исходников и собирает все во временной директории. Для `olcrtc` это сейчас обычный путь, потому что основной репозиторий не публикует бинарники релизов.
 
-## Installer Options
+## Опции установщика
 
-Common examples:
+Частые примеры:
 
 ```sh
-# Use another port.
+# Использовать другой порт.
 curl -fsSL https://raw.githubusercontent.com/BigDaddy3334/olcrtc-manager-panel/main/install.sh | sudo bash -s -- --port 8080
 
-# Bind directly to all interfaces. Use a firewall or reverse proxy in production.
+# Слушать на всех интерфейсах. В боевом окружении используйте firewall или обратный прокси.
 curl -fsSL https://raw.githubusercontent.com/BigDaddy3334/olcrtc-manager-panel/main/install.sh | sudo bash -s -- --addr 0.0.0.0
 
-# Use explicit binary artifacts instead of building.
+# Использовать явные бинарные артефакты вместо сборки.
 curl -fsSL https://raw.githubusercontent.com/BigDaddy3334/olcrtc-manager-panel/main/install.sh | sudo bash -s -- \
   --panel-url https://example.com/olcrtc-manager-linux-amd64 \
   --olcrtc-url https://example.com/olcrtc-linux-amd64
 ```
 
-Useful environment variables:
+Полезные переменные окружения:
 
-- `PANEL_REF`: branch/tag/commit of this repository, default `main`;
-- `OLCRTC_REF`: branch/tag/commit of `openlibrecommunity/olcrtc`, default `master`;
-- `PORT`: panel port, default `8888`;
-- `LISTEN_ADDR`: bind address, default `127.0.0.1`;
-- `ROOM_ID` and `ENDPOINT_KEY`: use pre-generated initial endpoint values;
-- `SPEED_MBPS`, `TRAFFIC_GB`, `EXPIRES_AT`: initial default client quota.
+- `PANEL_REF`: ветка/тег/commit этого репозитория, по умолчанию `main`;
+- `OLCRTC_REF`: ветка/тег/commit репозитория `openlibrecommunity/olcrtc`, по умолчанию `master`;
+- `PORT`: порт панели, по умолчанию `8888`;
+- `LISTEN_ADDR`: адрес прослушивания, по умолчанию `127.0.0.1`;
+- `ROOM_ID` и `ENDPOINT_KEY`: использовать заранее сгенерированные начальные значения endpoint;
+- `SPEED_MBPS`, `TRAFFIC_GB`, `EXPIRES_AT`: начальная квота клиента по умолчанию.
 
-The installer keeps an existing config by default. Pass `--force-config` to replace it; the old file is backed up with a timestamp.
+По умолчанию установщик сохраняет существующий конфиг. Передайте `--force-config`, чтобы заменить его; старый файл будет сохранен с суффиксом-временной меткой.
 
-## Manual Build
+## Ручная сборка
 
-Build frontend assets first, then build the Go binary so the panel is embedded into the manager:
+Сначала соберите ассеты фронтенда, затем Go-бинарник, чтобы панель была встроена в менеджер:
 
 ```sh
 pnpm install
@@ -79,7 +79,7 @@ pnpm build
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o olcrtc-manager ./cmd/olcrtc-manager
 ```
 
-Then install:
+Затем установите:
 
 ```sh
 sudo install -m 0755 olcrtc-manager /usr/local/bin/olcrtc-manager
@@ -91,34 +91,34 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now olcrtc-manager
 ```
 
-## First Run
+## Первый запуск
 
-Open the panel:
+Откройте панель:
 
 ```text
 http://127.0.0.1:8888/admin
 ```
 
-If `/etc/olcrtc-manager/panel.env` does not exist or does not contain a password, the panel starts in first-run mode and asks you to set the admin password.
+Если `/etc/olcrtc-manager/panel.env` не существует или не содержит пароль, панель запускается в режиме первого запуска и попросит задать пароль администратора.
 
-After setup, the manager writes:
+После настройки менеджер записывает:
 
 ```sh
 /etc/olcrtc-manager/panel.env
 ```
 
-Example content:
+Пример содержимого:
 
 ```sh
 OLCRTC_MANAGER_USER='admin'
 OLCRTC_MANAGER_PASS='your-password'
 ```
 
-The panel then uses cookie sessions for login. You can change the password later from the `Пароль` button in the panel header.
+После этого панель использует cookie-сессии для входа. Позже пароль можно изменить кнопкой `Пароль` в шапке панели.
 
-## Reverse Proxy
+## Обратный прокси
 
-The manager binds to `127.0.0.1` by default. To publish it through nginx:
+По умолчанию менеджер слушает `127.0.0.1`. Чтобы опубликовать его через nginx:
 
 ```nginx
 server {
@@ -137,15 +137,15 @@ server {
 }
 ```
 
-Then open:
+Затем откройте:
 
 ```text
 https://example.com:9443/admin
 ```
 
-## Config
+## Конфигурация
 
-Minimal config:
+Минимальный конфиг:
 
 ```json
 {
@@ -181,30 +181,30 @@ Minimal config:
 }
 ```
 
-Quota fields:
+Поля квоты:
 
-- `speed_mbps`: speed limit for the client location. `0` or absent means unlimited.
-- `traffic_gb`: traffic limit. `0` or absent means unlimited.
-- `used_bytes`: automatically updated by the manager.
-- `used_gb`: derived/legacy display value.
-- `expires_at`: optional expiration date in `YYYY-MM-DD`.
+- `speed_mbps`: ограничение скорости для локации клиента. `0` или отсутствие поля означает без ограничений.
+- `traffic_gb`: лимит трафика. `0` или отсутствие поля означает без ограничений.
+- `used_bytes`: автоматически обновляется менеджером.
+- `used_gb`: производное/устаревшее значение для отображения.
+- `expires_at`: необязательная дата окончания в формате `YYYY-MM-DD`.
 
-The old top-level `locations` format is still accepted and normalized to `clients`.
+Старый верхнеуровневый формат `locations` все еще поддерживается и нормализуется в `clients`.
 
-`endpoint.room_id` must be concrete. `any` is rejected.
+`endpoint.room_id` должен быть конкретным. Значение `any` отклоняется.
 
-## Network Isolation And Limits
+## Сетевая изоляция и лимиты
 
-For each running location the manager creates:
+Для каждой запущенной локации менеджер создает:
 
-- network namespace: `olc-*`;
+- сетевой namespace: `olc-*`;
 - host veth: `olh*`;
 - namespace veth: `oln*`;
-- NAT rule for namespace egress;
-- DNS file at `/etc/netns/<namespace>/resolv.conf`;
-- optional `tc tbf` speed limit on both veth sides.
+- NAT-правило для исходящего трафика из namespace;
+- DNS-файл в `/etc/netns/<namespace>/resolv.conf`;
+- опциональный лимит скорости `tc tbf` на обеих сторонах veth.
 
-Useful checks:
+Полезные проверки:
 
 ```sh
 ip netns list
@@ -214,17 +214,17 @@ ip netns exec olc-XXXXXXXX tc qdisc show
 iptables -t nat -S POSTROUTING | grep olcrtc-manager-netns
 ```
 
-Traffic accounting uses the host veth `tx_bytes`, which represents traffic sent from the VPS toward the client namespace. When the configured traffic quota is exceeded, the manager stops that client's location. If you increase `traffic_gb` above `used_bytes`, reload/restart will start it again.
+Учет трафика использует `tx_bytes` host veth, то есть трафик, отправленный с VPS в namespace клиента. Когда настроенная квота трафика превышена, менеджер останавливает локацию этого клиента. Если увеличить `traffic_gb` выше `used_bytes`, reload/restart снова запустит ее.
 
-## Subscriptions
+## Подписки
 
-Client subscription:
+Подписка клиента:
 
 ```text
 http://127.0.0.1:8888/<client-id>/
 ```
 
-The subscription includes quota metadata when configured:
+Если квота настроена, подписка содержит ее метаданные:
 
 ```text
 #quota-speed-mbps: 10
@@ -235,39 +235,39 @@ The subscription includes quota metadata when configured:
 #quota-status: active
 ```
 
-Possible quota statuses:
+Возможные статусы квоты:
 
 - `active`
 - `expired`
 - `traffic_exceeded`
 
-## Reload
+## Перезагрузка конфигурации
 
-Reload config and apply changed clients without restarting unchanged processes:
+Перезагрузить конфиг и применить изменения клиентов без рестарта неизмененных процессов:
 
 ```sh
 sudo systemctl reload olcrtc-manager
 ```
 
-Or locally:
+Или локально:
 
 ```sh
 curl -X POST http://127.0.0.1:8888/-/reload
 ```
 
-## API And Panel Auth
+## API и авторизация панели
 
-On a fresh install there is no default password. First-run setup must be completed from `/admin`.
+На свежей установке пароля по умолчанию нет. Настройку первого запуска нужно завершить через `/admin`.
 
-After setup:
+После настройки:
 
-- UI login uses a cookie session.
-- Basic auth still works for scripts and curl.
-- Password can be changed from the panel.
+- вход в UI использует cookie-сессию;
+- Basic auth по-прежнему работает для скриптов и `curl`;
+- пароль можно изменить из панели.
 
-## Helper Scripts
+## Вспомогательные скрипты
 
-Small helper scripts are available in `scripts/` for editing the JSON config:
+В `scripts/` есть небольшие скрипты для редактирования JSON-конфига:
 
 ```sh
 scripts/add-user.sh /etc/olcrtc-manager/config.json alice --from default
@@ -275,4 +275,4 @@ scripts/modify-user.sh /etc/olcrtc-manager/config.json alice --location-name Ger
 scripts/delete-user.sh /etc/olcrtc-manager/config.json alice
 ```
 
-Pass `--reload http://127.0.0.1:8888/-/reload` to reload the running manager after saving the config.
+Передайте `--reload http://127.0.0.1:8888/-/reload`, чтобы перезагрузить запущенный менеджер после сохранения конфига.
