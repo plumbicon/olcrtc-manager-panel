@@ -454,6 +454,39 @@ func TestUpdateClientReplacesLocations(t *testing.T) {
 	}
 }
 
+func TestDeleteLocationCanTargetTransport(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	dataLoc := testLocation("shared-room", "Data")
+	vp8Loc := testLocation("shared-room", "VP8")
+	vp8Loc.Transport = Transport{Type: "vp8channel"}
+	if err := writeConfig(configPath, Config{
+		Name: "ScumVPN",
+		Port: 8888,
+		Clients: []Client{{
+			ClientID:  "user",
+			Locations: []Location{dataLoc, vp8Loc},
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := deleteLocation(configPath, "user", "shared-room", "datachannel"); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := loadConfig(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Clients[0].Locations) != 1 {
+		t.Fatalf("locations = %d, want 1", len(cfg.Clients[0].Locations))
+	}
+	if got := cfg.Clients[0].Locations[0].Transport.Type; got != "vp8channel" {
+		t.Fatalf("remaining transport = %q, want vp8channel", got)
+	}
+}
+
 func TestSupervisorReloadStartsAddedLocationAndUpdatesSubscription(t *testing.T) {
 	loc1 := testLocation("room-01", "Netherlands")
 	loc2 := testLocation("room-02", "Germany")

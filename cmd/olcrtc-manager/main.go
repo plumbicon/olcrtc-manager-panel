@@ -450,7 +450,7 @@ func run() error {
 				http.NotFound(w, r)
 				return
 			}
-			if err := deleteLocation(configPath, parts[0], parts[1]); err != nil {
+			if err := deleteLocation(configPath, parts[0], parts[1], r.URL.Query().Get("transport")); err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
 				return
 			}
@@ -1209,11 +1209,12 @@ func addLocationFromRequest(ctx context.Context, configPath, olcrtcPath, clientI
 	return fmt.Errorf("client %q not found", clientID)
 }
 
-func deleteLocation(configPath, clientID, roomID string) error {
+func deleteLocation(configPath, clientID, roomID, transport string) error {
 	cfg, err := loadConfig(configPath)
 	if err != nil {
 		return err
 	}
+	transport = strings.TrimSpace(transport)
 	cfg.ensureClientsFormat()
 	for i := range cfg.Clients {
 		if cfg.Clients[i].ClientID != clientID {
@@ -1222,7 +1223,7 @@ func deleteLocation(configPath, clientID, roomID string) error {
 		next := cfg.Clients[i].Locations[:0]
 		deleted := false
 		for _, loc := range cfg.Clients[i].Locations {
-			if loc.Endpoint.RoomID == roomID {
+			if loc.Endpoint.RoomID == roomID && (transport == "" || loc.Transport.Type == transport) {
 				deleted = true
 				continue
 			}

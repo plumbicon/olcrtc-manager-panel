@@ -821,10 +821,14 @@ function App() {
 
   const deleteLocation = (clientID: string, location: LocationState) =>
     runAction(async () => {
-      if (!window.confirm(`Удалить локацию ${location.name || location.room_id}?`)) return;
-      await request(`/api/clients/${encodeURIComponent(clientID)}/locations/${encodeURIComponent(location.room_id)}`, {
-        method: "DELETE",
-      });
+      if (!window.confirm(`Удалить комнату ${location.name || location.room_id}?`)) return;
+      const params = new URLSearchParams({ transport: location.transport });
+      await request(
+        `/api/clients/${encodeURIComponent(clientID)}/locations/${encodeURIComponent(location.room_id)}?${params}`,
+        {
+          method: "DELETE",
+        },
+      );
     }, "Локация удалена");
 
   const restartLocation = (clientID: string, location: LocationState) =>
@@ -1078,21 +1082,24 @@ function App() {
                               <Edit3 className="h-4 w-4" />
                               Edit
                             </button>
-                            <button
-                              className="inline-flex h-8 items-center gap-2 rounded-md border border-destructive/40 px-2 text-sm text-destructive hover:bg-destructive/10 disabled:opacity-60"
-                              disabled={busy}
-                              onClick={() => deleteClient(client.client_id)}
-                            >
-                              <Trash2 className="h-4 w-4" />
-                              Удалить
-                            </button>
                             {client.locations.length > 1 && (
                               <button
                                 className="inline-flex h-8 items-center gap-2 rounded-md border border-destructive/40 px-2 text-sm text-destructive hover:bg-destructive/10 disabled:opacity-60"
                                 disabled={busy}
                                 onClick={() => deleteLocation(client.client_id, loc)}
                               >
-                                -Loc
+                                <Trash2 className="h-4 w-4" />
+                                Комнату
+                              </button>
+                            )}
+                            {index === 0 && clients.length > 1 && (
+                              <button
+                                className="inline-flex h-8 items-center gap-2 rounded-md border border-destructive/40 px-2 text-sm text-destructive hover:bg-destructive/10 disabled:opacity-60"
+                                disabled={busy}
+                                onClick={() => deleteClient(client.client_id)}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                                Клиента
                               </button>
                             )}
                           </div>
